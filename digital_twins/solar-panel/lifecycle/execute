@@ -32,9 +32,24 @@ FRONTEND_PID=$!
 echo "$FRONTEND_PID" >> "../$PID_FILE"
 cd ..
 
+# Attempt to detect the actual process listening on the frontend port (5173)
+# and record its PID as well — npm may spawn children and exit, leaving
+# vite running under a different PID. This ensures terminate kills the
+# real server process instead of an exited wrapper.
+sleep 2
+if command -v lsof >/dev/null 2>&1; then
+	ACTUAL_FRONTEND_PIDS=$(lsof -ti tcp:5173 2>/dev/null || true)
+	if [ -n "$ACTUAL_FRONTEND_PIDS" ]; then
+		for p in $ACTUAL_FRONTEND_PIDS; do
+			echo "$p" >> "$PID_FILE"
+		done
+	fi
+fi
+
 # 3. Start the Hardware Mock (The Physical Body)
-echo "Starting Hardware Mock..."
-nohup python3 hardware/mock_panel.py > logs/mock_panel.log 2>&1 &
+HARDWARE_SCRIPT="${HARDWARE_SCRIPT:-hardware/mock_panel.py}"
+echo "Starting Hardware Interface: $HARDWARE_SCRIPT"
+nohup python3 "$HARDWARE_SCRIPT" > logs/mock_panel.log 2>&1 &
 MOCK_PID=$!
 echo "$MOCK_PID" >> "$PID_FILE"
 
@@ -42,13 +57,9 @@ echo "$MOCK_PID" >> "$PID_FILE"
 sleep 2
 
 # 4. Start the Digital Twins (The Brains)
-echo "Starting State Proxy..."
-nohup python3 models/hardware_proxy.py > logs/hardware_proxy.log 2>&1 &
-PROXY_PID=$!
-echo "$PROXY_PID" >> "$PID_FILE"
-
-echo "Starting AI Optimizer (FMU-aware runner)..."
-nohup python3 models/run_optimizer_fmu.py > logs/optimizer.log 2>&1 &
+# Start the AI Optimizer (direct Python runner)
+echo "Starting AI Optimizer (Python source)..."
+nohup python3 ../../../models/solar-panel/optimizer.py > logs/optimizer.log 2>&1 &
 OPTIMIZER_PID=$!
 echo "$OPTIMIZER_PID" >> "$PID_FILE"
 
